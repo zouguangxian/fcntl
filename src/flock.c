@@ -21,8 +21,16 @@
    You should have received a copy of the GNU Lesser General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
+#if defined(_WIN32)
+/* lock operations for flock(2) */
+#define LOCK_SH         0x01            /* shared file lock */
+#define LOCK_EX         0x02            /* exclusive file lock */
+#define LOCK_NB         0x04            /* don't block when locking */
+#define LOCK_UN         0x08            /* unlock file */
+#else
 #include <config.h>
 #include <sys/file.h>
+#endif /* defined(_WIN32) */
 
 #if (defined _WIN32 || defined __WIN32__) && ! defined __CYGWIN__
 

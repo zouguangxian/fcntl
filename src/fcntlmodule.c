@@ -9,8 +9,26 @@
 #include <sys/file.h>
 #endif
 
+#if !defined(_WIN32)
 #include <sys/ioctl.h>
 #include <fcntl.h>
+#else
+#include <WinSock2.h>
+#define HAVE_FLOCK
+int
+flock (int fd, int operation);
+
+#ifndef F_SETFL
+#define F_GETFL         3               /* get file status flags */
+#define F_SETFL         4               /* set file status flags */
+#endif
+
+#ifndef O_NONBLOCK
+#define O_NONBLOCK      0x0004          /* no delay */
+#endif
+
+#endif /* defined(_WIN32) */
+
 #ifdef HAVE_STROPTS_H
 #include <stropts.h>
 #endif
@@ -39,9 +57,17 @@ fcntl_fcntl(PyObject *self, PyObject *args)
     char *str;
     Py_ssize_t len;
     char buf[1024];
+#if defined(_WIN32)
+    u_long flag = 0;
+#endif
 
     if (PyArg_ParseTuple(args, "O&is#:fcntl",
                          conv_descriptor, &fd, &code, &str, &len)) {
+#if defined(_WIN32)
+            PyErr_SetString(PyExc_ValueError,
+                            "fcntl don't support string arg on Windows");
+            return NULL;
+#endif
         if (len > sizeof buf) {
             PyErr_SetString(PyExc_ValueError,
                             "fcntl string arg too long");
@@ -49,7 +75,10 @@ fcntl_fcntl(PyObject *self, PyObject *args)
         }
         memcpy(buf, str, len);
         Py_BEGIN_ALLOW_THREADS
+#if defined(_WIN32)
+#else
         ret = fcntl(fd, code, buf);
+#endif
         Py_END_ALLOW_THREADS
         if (ret < 0) {
             PyErr_SetFromErrno(PyExc_IOError);
@@ -67,7 +96,25 @@ fcntl_fcntl(PyObject *self, PyObject *args)
       return NULL;
     }
     Py_BEGIN_ALLOW_THREADS
+#if defined(_WIN32)
+    switch(arg) {
+        case F_GETFL:
+            ret = 0;
+            break;
+        case F_SETFL:
+            flag = ((arg & O_NONBLOCK) == O_NONBLOCK) ? 0 : 1;
+            ioctlsocket(fd, FIONBIO, &flag);
+            ret = 0;
+            break;
+        default:
+            PyErr_SetString(PyExc_ValueError,
+                            "fcntl only support F_GETFL/F_SETFL on Windows");
+            return NULL;
+    }
+#else
     ret = fcntl(fd, code, arg);
+#endif /* defined(_WIN32) */
+
     Py_END_ALLOW_THREADS
     if (ret < 0) {
         PyErr_SetFromErrno(PyExc_IOError);
@@ -96,6 +143,11 @@ corresponding to the return value of the fcntl call in the C code.");
 static PyObject *
 fcntl_ioctl(PyObject *self, PyObject *args)
 {
+#if defined(_WIN32)
+    PyErr_SetString(PyExc_NotImplementedError,
+                    "ioctl not supported on Windows");
+    return NULL;
+#else
 #define IOCTL_BUFSZ 1024
     int fd;
     /* In PyArg_ParseTuple below, we use the unsigned non-checked 'I'
@@ -210,6 +262,7 @@ fcntl_ioctl(PyObject *self, PyObject *args)
     }
     return PyInt_FromLong((long)ret);
 #undef IOCTL_BUFSZ
+#endif /* defined(_WIN32) */
 }
 
 PyDoc_STRVAR(ioctl_doc,
@@ -317,6 +370,29 @@ fcntl_lockf(PyObject *self, PyObject *args)
                           &lenobj, &startobj, &whence))
         return NULL;
 
+#if defined(_WIN32)
+#ifndef LOCK_SH
+#define LOCK_SH         1       /* shared lock */
+#define LOCK_EX         2       /* exclusive lock */
+#define LOCK_NB         4       /* don't block when locking */
+#define LOCK_UN         8       /* unlock */
+#endif  /* LOCK_SH */
+    {
+        if (code == LOCK_UN || code & LOCK_SH || code & LOCK_EX) {
+            // pass
+        } else {
+            PyErr_SetString(PyExc_ValueError,
+                            "unrecognized lockf argument");
+            return NULL;
+        }
+    }
+    Py_BEGIN_ALLOW_THREADS
+    ret = flock(fd, code);
+    Py_END_ALLOW_THREADS
+
+    Py_INCREF(Py_None);
+    return Py_None;
+#else /* defined(_WIN32) */
 #if defined(PYOS_OS2) && defined(PYCC_GCC)
     PyErr_SetString(PyExc_NotImplementedError,
                     "lockf not supported on OS/2 (EMX)");
@@ -376,6 +452,7 @@ fcntl_lockf(PyObject *self, PyObject *args)
     Py_INCREF(Py_None);
     return Py_None;
 #endif  /* defined(PYOS_OS2) && defined(PYCC_GCC) */
+#endif /* defined(_WIN32) */
 }
 
 PyDoc_STRVAR(lockf_doc,
